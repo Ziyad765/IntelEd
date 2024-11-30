@@ -1,0 +1,6 @@
+flask
+opencv-python
+openvino-dev
+speechrecognition
+pyttsx3
+g4f

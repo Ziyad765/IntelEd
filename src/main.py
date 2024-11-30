@@ -5,9 +5,8 @@ from tkinter import scrolledtext
 from tkinter import ttk
 import cv2
 import threading
-import random
 from collections import Counter
-from fer import FER  
+from openvino.runtime import Core  # OpenVINO integration
 from g4f.client import Client  # Updated import for g4f.client
 
 engine = pyttsx3.init()
@@ -23,9 +22,13 @@ responses_by_mood = {
     "neutral": ["Let's get started with today's lesson!", "What topic would you like to learn about today?"],
 }
 
-detector = FER()
-
 client = Client()  # Initialize the Client for new approach
+
+# Initialize OpenVINO
+core = Core()
+emotion_model = core.read_model("path/to/emotion-recognition-retail-0003.xml")  # Replace with your model path
+compiled_model = core.compile_model(emotion_model, "CPU")  # Use CPU for inference
+output_layer = compiled_model.outputs[0]
 
 def GPT(message, mood):
     global messages
@@ -55,8 +58,7 @@ def listen():
     r = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening...")
-        # Increase the listening time by setting a timeout and/or phrase_time_limit
-        audio = r.listen(source, timeout=10, phrase_time_limit=10)  # Listen for up to 10 seconds
+        audio = r.listen(source, timeout=10, phrase_time_limit=10)
     try:
         user_query = r.recognize_google(audio)
         print(f"User query: {user_query}")
@@ -71,17 +73,19 @@ def listen():
 def detect_mood():
     cap = cv2.VideoCapture(0)
     emotions_detected = []
+    emotion_labels = ["neutral", "happy", "sad", "surprise", "anger"]  # Update based on your model's output
 
-    for _ in range(10):  
+    for _ in range(10):  # Capture 10 frames for mood detection
         ret, frame = cap.read()
         if ret:
-            emotions = detector.detect_emotions(frame)
-            if emotions:
-                dominant_emotion = max(emotions[0]['emotions'], key=emotions[0]['emotions'].get)
-                emotions_detected.append(dominant_emotion)
-                print(f"Detected emotion: {dominant_emotion}")
+            resized_frame = cv2.resize(frame, (64, 64))  # Resize frame to model's input size
+            blob = cv2.dnn.blobFromImage(resized_frame, 1.0, (64, 64), (0, 0, 0), swapRB=True, crop=False)
+            results = compiled_model([blob])[output_layer]
+            dominant_emotion = emotion_labels[results.argmax()]  # Get the emotion with the highest probability
+            emotions_detected.append(dominant_emotion)
+            print(f"Detected emotion: {dominant_emotion}")
 
-        cv2.imshow('Face Detection', frame)
+        cv2.imshow('Emotion Detection', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -100,21 +104,22 @@ def handle_query(query):
     mood = detect_mood()
     response = GPT(query, mood)
 
-    fun_response = random.choice(responses_by_mood.get(mood, ["Let's proceed with the lesson."]))
+    # Get a response based on the detected mood
+    response_from_mood = responses_by_mood.get(mood, ["Let's proceed with the lesson."])[0]
     
     # First display the text in the response box, then speak
     response_box.configure(state=tk.NORMAL)
     response_box.insert(tk.END, f"You: {query}\n", 'user')
-    response_box.insert(tk.END, f"IntelEd: {response}\n", 'bot')  # Change name here
-    response_box.insert(tk.END, f"IntelEd (fun): {fun_response}\n\n", 'fun')  # Change name here
+    response_box.insert(tk.END, f"IntelEd: {response}\n", 'bot')
+    response_box.insert(tk.END, f"IntelEd (emotion-based): {response_from_mood}\n\n", 'fun')
     response_box.configure(state=tk.DISABLED)
     response_box.see(tk.END)
 
     # Then speak the response
     speak(response)
-    speak(fun_response)
+    speak(response_from_mood)
     
-    return response, fun_response
+    return response, response_from_mood
 
 def send_query(query):
     if query.strip():
